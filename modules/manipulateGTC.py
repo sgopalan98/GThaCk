@@ -80,7 +80,7 @@ def manipulate_gtc(self):
             data[1002][loc] = 2
         elif (str(line.rstrip().split()[1])[0] == '-') and (str(line.rstrip().split()[1])[1] == '-'):
             data[1002][loc] = 0
-        elif (str(line.rstrip().split()[1])[0] == str(line.rstrip().split()[1])[1]) and (str(line.rstrip().split()[1])[0] in ['A', 'T', 'G', 'C']) and (str(line.rstrip().split()[1])[1] in ['A', 'T', 'G', 'C']):
+        elif (str(line.rstrip().split()[1])[0] == str(line.rstrip().split()[1])[1]):
             if manifest.snps[loc].decode().find(str(line.rstrip().split()[1])[0]) != -1:
                 data[1002][loc] = manifest.snps[loc].decode().find(str(line.rstrip().split()[1])[0])
             else:
