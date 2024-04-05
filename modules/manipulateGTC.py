@@ -18,6 +18,7 @@ def manipulate_gtc(self):
     logger.debug('In method manipulate_gtc()')
     
     bpm=self.bpm
+    bpm_csv=self.bpm_csv
     gtcDir=self.gtcDir
     outDir=self.outDir
     snpsToUpdate=self.snpUpdateFile
@@ -73,31 +74,64 @@ def manipulate_gtc(self):
         logger = logging.getLogger('snpUpdate')
         logger.debug("In sub-method of manipulate_gtc() -- snpUpdate()")
         
+        COMPLEMENT_MAP = dict(zip("ABCDGHKMRTVYNID", "TVGHCDMKYABRNID"))
+        
         loc = manifest.names.index(line.rstrip().split()[0])
-        originalSnp = data[1003][loc]
-        data[1003][loc] = str(line.rstrip().split()[1]).encode()
-        if ((str(line.rstrip().split()[1])[0] != str(line.rstrip().split()[1])[1]) and (str(line.rstrip().split()[1])[0] != '-')):
-            data[1002][loc] = 2
-        elif (str(line.rstrip().split()[1])[0] == '-') and (str(line.rstrip().split()[1])[1] == '-'):
-            data[1002][loc] = 0
-        elif (str(line.rstrip().split()[1])[0] == str(line.rstrip().split()[1])[1]) and (str(line.rstrip().split()[1])[0] in ['A', 'T', 'G', 'C']) and (str(line.rstrip().split()[1])[1] in ['A', 'T', 'G', 'C']):
-            if manifest.snps[loc].decode().find(str(line.rstrip().split()[1])[0]) != -1:
-                data[1002][loc] = manifest.snps[loc].decode().find(str(line.rstrip().split()[1])[0])
-            else:
-                logger.warning('WARNING! {} allele possibilities do not match manifest.  {}={} and manifest={}. This snp will not be updated.'
-                    .format(line.rstrip().split()[0],
-                            line.rstrip().split()[0], originalSnp,
-                            manifest.snps[loc]))
-                print(
-                    'WARNING! {} allele possibilities do not match manifest.  {}={} and manifest={}. This snp will not be updated.'
-                    .format(line.rstrip().split()[0],
-                            line.rstrip().split()[0], originalSnp,
-                            manifest.snps[loc]))
-                sys.stdout.flush()
-                data[1003][loc] = originalSnp
-        else:
-            pass
+        manifest_name = manifest.names[loc]
+        manifest_name_csv = manifest_csv.names[loc]
+        assert manifest_name == manifest_name_csv
 
+
+        manifestSnpsStr = manifest.snps[loc].decode()
+        manifestSnps = [manifestSnpsStr[1], manifestSnpsStr[-2]]
+        if manifest.ref_strands[loc] == RefStrand.Minus:
+            manifestSnps = [COMPLEMENT_MAP[snp] for snp in manifestSnps]
+
+
+        newSnpsStr = str(line.rstrip().split()[1])
+        newSnps = [newSnpsStr[0], newSnpsStr[1]]
+
+        # Getting genotype byte
+        if newSnps[0] != newSnps[1] and newSnps[0] != '-':
+            data[1002][loc] = 2
+        elif newSnps[0] == '-' and newSnps[1] == '-':
+            data[1002][loc] = 0
+            data[1003][loc] = '--'.encode()
+        elif newSnps[0] == newSnps[1]:
+            if newSnps[0] in manifestSnps:
+                if newSnps[0] == manifestSnps[0]:
+                    data[1002][loc] = 1
+                else:
+                    data[1002][loc] = 3
+            else:
+                newSnps = [COMPLEMENT_MAP[snp] for snp in newSnps]
+                if newSnps[0] == manifestSnps[0]:
+                    data[1002][loc] = 1
+                else:
+                    data[1002][loc] = 3
+        else:
+            print("NO CONDITION MET; SOMETHING IS WRONG")
+
+        # Getting base call byte
+        if data[1002][loc] == 0:
+            data[1003][loc] = '--'.encode()
+        else:
+            if newSnps[0] in ['I', 'D']:
+                if data[1002][loc] == 1:
+                    data[1003][loc] = (manifestSnps[0] + manifestSnps[0]).encode()
+                elif data[1002][loc] == 2:
+                    data[1003][loc] = (manifestSnps[0] + manifestSnps[1]).encode()
+                else:
+                    data[1003][loc] = (manifestSnps[1] + manifestSnps[1]).encode()
+            else:
+                allele_a = manifest_csv.alleles[loc][0]
+                allele_b = manifest_csv.alleles[loc][1]
+                if data[1002][loc] == 1:
+                    data[1003][loc] = (allele_a + allele_a).encode()
+                elif data[1002][loc] == 2:
+                    data[1003][loc] = (allele_a + allele_b).encode()
+                else:
+                    data[1003][loc] = (allele_b + allele_b).encode()
         return data
 
     
@@ -174,6 +208,44 @@ def manipulate_gtc(self):
 ###################################################################################################################
     logger.debug('Preparing to read in bpm file...')
     manifest = BeadPoolManifest(bpm)
+    def get_manifest_csv():
+        import csv
+
+        def read_csv(file_path):
+            with open(file_path) as f:
+                reader = csv.reader(f)
+                for i in range(7):
+                    next(reader)
+                header = next(reader)
+                for row in reader:
+                    yield dict(zip(header, row))
+
+
+        file_path = self.bpm_csv
+        # for row in read_csv(file_path):
+        #     print(row.header)
+        rows = list(read_csv(file_path))
+        class Manifest:
+            def __init__(self):
+                self.names = []
+                self.alleles = []
+
+        manifest = Manifest()
+        for row in rows:
+            if 'Name' not in row or 'TopGenomicSeq' not in row:
+                continue
+            name = row['Name']
+            top_genomic_seq = row['TopGenomicSeq']
+            # get the string in top_genomic_seq which is in the format [alphabet/alphabet] and which will be in any index in the top_genomic_seq
+            allele = 'NA'
+            for i in range(len(top_genomic_seq) - 1):
+                if top_genomic_seq[i] == '[' and top_genomic_seq[i + 4] == ']':
+                    allele = top_genomic_seq[i + 1], top_genomic_seq[i + 3]
+                    break
+            manifest.names.append(name)
+            manifest.alleles.append(allele)
+        return manifest
+    manifest_csv = get_manifest_csv()
     logger.debug('Successfully loaded BPM file')
 
     #######################
